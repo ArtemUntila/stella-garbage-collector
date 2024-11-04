@@ -14,7 +14,7 @@ Tested on Ubuntu 24.04.
   * Usage: `./build.sh program.st`
   * you will have to run it manually
 * [`run.sh`](run.sh) - runs Stella program
-  * Usage; `./run.sh program.st` 
+  * Usage; `./run.sh program.st <input>` 
 
 Note: both `build.sh` and `run.sh` require program to be located in project root dir. In other cases, use `stella2c` and `gcc` manually.
 
@@ -52,7 +52,7 @@ fn main(n : Nat) -> Nat {
 
 Run:
 ```bash
-echo 5 | ./run.sh square.st
+./run.sh square.st 5
 ```
 
 ## Available parameters
