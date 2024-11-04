@@ -8,7 +8,7 @@
                 "-fdiagnostics-color=always",
                 "-g",
                 "-std=c11",
-                "-DSTELLA_DEBUG", "-DSTELLA_GC_STATS", "-DSTELLA_RUNTIME_STATS",
+                "-DSTELLA_DEBUG", "-DSTELLA_GC_STATS", "-DSTELLA_RUNTIME_STATS", "-DSTELLA_DUMP_GC_STATE_ON_GC",
                 "${file}", "${fileDirname}/stella/runtime.c", "${fileDirname}/stella/gc.c",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}"
