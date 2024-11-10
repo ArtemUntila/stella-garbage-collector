@@ -26,7 +26,7 @@ int gc_roots_top = 0;
 void **gc_roots[MAX_GC_ROOTS];
 
 // Copying GC
-#define MAX_HEAP_SIZE 1600
+#define MAX_SPACE_SIZE 3200
 
 int gc_cycles = 0;
 
@@ -37,6 +37,12 @@ void *to_space;
 void *next;
 void *scan;
 
+// Incremental GC
+void *limit;
+int inc_mode;
+
+int total_read_forwards;
+
 // Utils
 #define MAX(a, b) ((a > b) ? a : b )
 
@@ -44,30 +50,46 @@ int field_count(stella_object *obj) {
   return STELLA_OBJECT_HEADER_FIELD_COUNT(obj->object_header);
 }
 
-int size_of_object(stella_object *obj) {
+size_t size_of_object(stella_object *obj) {
   return sizeof(stella_object) + (field_count(obj) * sizeof(void*));
+}
+
+void print_space_range(void *space) {
+  printf("[%p : %p]", space, space + MAX_SPACE_SIZE);
 }
 
 // Implementation
 void init_heap() {
-  printf("[GC] Initalizing heap: ");
-  from_space = malloc(MAX_HEAP_SIZE);
-  to_space = malloc(MAX_HEAP_SIZE);
+  printf("[GC] Initializing heap: ");
+  from_space = malloc(MAX_SPACE_SIZE);
+  to_space = malloc(MAX_SPACE_SIZE);
   alloc_pos = from_space;
-  printf("from_space = [%p : %p]; to_space = [%p : %p]\n", from_space, from_space + MAX_HEAP_SIZE, to_space, to_space + MAX_HEAP_SIZE);
+  limit = from_space + MAX_SPACE_SIZE;
+  printf("from_space = ");print_space_range(from_space);printf("; to_space =");print_space_range(to_space);printf("\n");
 }
 
 int points_to(void *space, void *p) {
-  return p >= space && p < (space + MAX_HEAP_SIZE);
+  return p >= space && p < (space + MAX_SPACE_SIZE);
+}
+
+void check_oom(size_t size_in_bytes) {
+  if (alloc_pos + size_in_bytes > limit) {
+    printf("[GC] Out of memory\n");
+    #ifdef STELLA_GC_STATS_ON_OOM
+    print_gc_alloc_stats();
+    #endif
+    exit(12);
+  }
 }
 
 void chase(stella_object *p) {
   do {
-    // printf("[CHASE] p = %p\n", p);
     stella_object *q = next;
-    next = next + size_of_object(p);
+    size_t size_of_p = size_of_object(p);
+    check_oom(size_of_p);
+    next = next + size_of_p;
+    alloc_pos = next; // sync incremental
     void *r = NULL;
-    // printf("[CHASE] field_count = %d\n", field_count);
     q->object_header = p->object_header;
     for (int i = 0; i < field_count(p); i++) {
       stella_object* fi = p->object_fields[i];
@@ -82,7 +104,6 @@ void chase(stella_object *p) {
 }
 
 void* forward(void *p) {
-  // printf("[FORWARD] p = %p\n", p);
   if (points_to(from_space, p)) {
     stella_object *obj = (stella_object*) p;
     if (points_to(to_space, obj->object_fields[0])) {
@@ -99,31 +120,40 @@ void* forward(void *p) {
 void gc() {
   gc_cycles++;
   scan = next = to_space;
-  printf("[GC] Start GC: scan = %p, next = %p\n", scan, next);
-  #ifdef STELLA_DUMP_GC_STATE_ON_GC
+  printf("[GC] Start GC\n");
+  #ifdef STELLA_GC_STATE_ON_GC_START
   print_gc_state();
   #endif
+  limit = to_space + MAX_SPACE_SIZE;
+  alloc_pos = to_space;
   for (int i = 0; i < gc_roots_top; i++) {
     void **root = gc_roots[i];
     *root = forward(*root);
   }
-  printf("[GC] Finish forwarding roots: scan = %p, next = %p\n", scan, next);
-  while (scan < next) {
+  printf("[GC] Finish forwarding roots\n");
+  inc_mode = 1;
+}
+
+void inc_gc() {
+  if (scan < next) {
+    printf("[GC] Incrementally forwarding fields of object at %p\n", scan);
     stella_object *obj = scan;
     for (int i = 0; i < field_count(obj); i++) {
       obj->object_fields[i] = forward(obj->object_fields[i]);
     }
     scan = scan + size_of_object(obj);
   }
-  printf("[GC] Finish forwarding fields: scan = %p, next = %p\n", scan, next);
-  void *tmp = to_space;
-  to_space = from_space;
-  from_space = tmp;
-  alloc_pos = next;
-  printf("[GC] Finish GC: collected %ld bytes of garbage\n", from_space + MAX_HEAP_SIZE - alloc_pos);
-  #ifdef STELLA_DUMP_GC_STATE_ON_GC
-  print_gc_state();
-  #endif
+  if (scan == next) {
+    printf("[GC] Finish incremental GC\n");
+    #ifdef STELLA_GC_STATE_ON_GC_END
+    print_gc_state();
+    #endif
+    inc_mode = 0;
+
+    void *tmp = to_space;
+    to_space = from_space;
+    from_space = tmp;
+  }
 }
 
 void* gc_alloc(size_t size_in_bytes) {
@@ -131,8 +161,8 @@ void* gc_alloc(size_t size_in_bytes) {
     init_heap();
   }
 
-  printf("[GC] Start allocation of %zu bytes at %p\n", size_in_bytes, alloc_pos);
-  if (alloc_pos + size_in_bytes > (from_space + MAX_HEAP_SIZE)) {
+  printf("[GC] Allocating %zu bytes\n", size_in_bytes);
+  if (!inc_mode && alloc_pos + size_in_bytes > limit) {
     gc();
     max_allocated_bytes = MAX(max_allocated_bytes, cycle_allocated_bytes);
     max_allocated_objects = MAX(max_allocated_objects, cycle_allocated_objects);
@@ -140,14 +170,19 @@ void* gc_alloc(size_t size_in_bytes) {
     cycle_allocated_objects = 0;
   }
 
-  if (alloc_pos + size_in_bytes > (from_space + MAX_HEAP_SIZE)) {
-    printf("[GC] Out of memory\n");
-    exit(12);
-  }
+  check_oom(size_in_bytes);
 
-  void *obj = alloc_pos;
-  alloc_pos += size_in_bytes;
-  printf("[GC] Finish allocation of %zu bytes at %p\n", size_in_bytes, obj);
+  void *obj;
+  if (inc_mode) {
+    inc_gc();
+    check_oom(size_in_bytes);
+    limit -= size_in_bytes;
+    obj = limit;
+  } else {
+    obj = alloc_pos;
+    alloc_pos += size_in_bytes;
+  }
+  printf("[GC] Allocated %zu bytes at %p\n", size_in_bytes, obj);
 
   total_allocated_bytes += size_in_bytes;
   total_allocated_objects += 1;
@@ -165,34 +200,65 @@ void print_gc_roots() {
 }
 
 void print_gc_alloc_stats() {
+  #ifdef STELLA_GC_STATE_ON_STATS
+  print_gc_state();
+  #endif
   printf("Total memory allocation: %'d bytes (%'d objects)\n", total_allocated_bytes, total_allocated_objects);
   printf("Maximum residency:       %'d bytes (%'d objects)\n", MAX(max_allocated_bytes, cycle_allocated_bytes), MAX(max_allocated_objects, cycle_allocated_objects));
   printf("Total memory use:        %'d reads and %'d writes\n", total_reads, total_writes);
   printf("Max GC roots stack size: %'d roots\n", gc_roots_max_size);
-  printf("GC cycles:               %'d cycles", gc_cycles);
+  printf("GC cycles:               %'d cycles\n", gc_cycles);
+  printf("Total read forwardings:  %'d reads\n", total_read_forwards);
 }
 
-// It's more likely to be a "heap dump" rather than gc state
+void print_mem(void *start, void *end) {
+  void *p = start;
+  while (p < end) {
+    printf("  %p : ", p);print_stella_object(p);printf("\n");
+    p += size_of_object(p);
+  }
+}
+
+void print_from_space() {
+  printf("FROM-SPACE ");print_space_range(from_space);
+  if (points_to(from_space, alloc_pos)) {
+    printf(" (active):\n");
+    print_mem(from_space, alloc_pos);
+  } else {
+    printf(":\n");
+    print_mem(from_space, from_space + MAX_SPACE_SIZE);
+  }
+}
+
+void print_to_space() {
+  if (!points_to(to_space, alloc_pos)) return;
+  printf("TO-SPACE ");print_space_range(to_space);printf(" (active):\n");
+  print_mem(to_space, alloc_pos);
+  if (limit < to_space + MAX_SPACE_SIZE) {
+    printf("  ...\n");
+    print_mem(limit, to_space + MAX_SPACE_SIZE);
+  }
+}
+
 void print_gc_state() {
   printf("------------------------------------------------------------\n");
   printf("Garbage collector (GC) state:\n");
-  
-  printf("HEAP: used = %ld bytes; free = %ld bytes\n", alloc_pos - from_space, from_space + MAX_HEAP_SIZE - alloc_pos);
-  void *p = from_space;
-  while (p < alloc_pos) {
-    printf("  %p : ", p);
-    print_stella_object(p);
-    printf("\n");
-    p += size_of_object(p);
-  }
-
+  printf("HEAP: free = %ld bytes, used = %ld bytes, scan = %p, next = %p, limit = %p\n", limit - alloc_pos, (MAX_SPACE_SIZE - (limit - alloc_pos)), scan, next, limit);
+  print_from_space();
+  print_to_space();
   print_gc_roots();
-
   printf("------------------------------------------------------------\n");
 }
 
 void gc_read_barrier(void *object, int field_index) {
   total_reads += 1;
+  if (inc_mode) {
+    stella_object *obj = (stella_object*) object;
+    if (points_to(from_space, obj->object_fields[field_index])) {
+      total_read_forwards++;
+      obj->object_fields[field_index] = forward(obj->object_fields[field_index]);
+    }
+  }
 }
 
 void gc_write_barrier(void *object, int field_index, void *contents) {

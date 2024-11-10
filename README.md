@@ -1,6 +1,6 @@
 # Stella Garbage Collector
 
-Implementation of copying garbage collector for [Stella](https://fizruk.github.io/stella/) programming language.
+Implementation of incremental (Baker's algorithm) copying garbage collector for [Stella](https://fizruk.github.io/stella/) programming language.
 
 Tested on Ubuntu 24.04.
 
@@ -16,7 +16,7 @@ Tested on Ubuntu 24.04.
 * [`run.sh`](run.sh) - runs Stella program
   * Usage; `./run.sh program.st <input>` 
 
-Note: both `build.sh` and `run.sh` require program to be located in project root dir. In other cases, use `stella2c` and `gcc` manually.
+Note: both `build.sh` and `run.sh` will create `.c` and executable file in the project root directory.
 
 ## Usage example
 
@@ -60,34 +60,58 @@ Run:
 * `STELLA_DEBUG` - print debug info
 * `STELLA_GC_STATS` - print garbage collector (GC) statistics at the end of program execution
 * `STELLA_RUNTIME_STATS` - print runtime statistics at the end of program execution
-* `STELLA_DUMP_GC_STATE_ON_GC` - print GC state (heapdump basically) before and after garbage collection. Note: the behavior of this feature may be undefined, please disable it if you encounter so beloved `Segmentation fault` during heapdump output
-* `MAX_HEAP_SIZE` - max size of from-space/to-space. It means, that GC will allocate `2 * MAX_HEAP_SIZE` bytes. See [source](stella/gc.c)
+* `STELLA_GC_STATE_ON_GC_START` - print GC state before garbage collection
+* `STELLA_GC_STATE_ON_GC_END` - print GC state after garbage collection
+* `STELLA_GC_STATE_ON_STATS` - print GC state with GS statistics at the end of program execution
+* `STELLA_GC_STATS_ON_OOM` - print GC statistics when program runs out of memory
+* `MAX_SPACE_SIZE` - max size of from-space/to-space. It means, that GC will allocate `2 * MAX_SPACE_SIZE` bytes (total heap size). See [source](stella/gc.c)
 
 ## Garbage Collector debug info format examples
 
 `GC_STATS`:
 ```
 Garbage collector (GC) statistics:
-Total memory allocation: 2312 bytes (134 objects)
-Maximum residency:       1600 bytes (94 objects)
-Total memory use:        3950 reads and 0 writes
+Total memory allocation: 5032 bytes (298 objects)
+Maximum residency:       3192 bytes (192 objects)
+Total memory use:        29465 reads and 0 writes
 Max GC roots stack size: 31 roots
-GC cycles:               1 cycles
+GC cycles:               2 cycles
+Total read forwardings:  200 reads
 ```
 
 `GC_STATE`:
 ```
 Garbage collector (GC) state:
-HEAP: used = 752 bytes; free = 848 bytes
-  0x55efa7a8a320 : 7
-  0x55efa7a8a330 : 6
-  0x55efa7a8a340 : 5
-  ...
+HEAP: free = 8 bytes, used = 3192 bytes, scan = 0x5631766f5320, next = 0x5631766f5320, limit = 0x5631766f65c8
+FROM-SPACE [0x5631766f5fb0 : 0x5631766f6c30] (active):
+  0x5631766f5fb0 : 11
+  0x5631766f5fc0 : 10
+  0x5631766f5fd0 : 9
 ROOTS: count = 31
-  0x7fff2a0363f8 -> 0x55efa7114040
-  0x7fff2a036400 -> 0x55efa7a8a320
-  0x7fff2a0363e0 -> 0x55efa7a8a320
+  0x7ffea0a8e968 -> 0x563175dbb040
+  0x7ffea0a8e970 -> 0x5631766f5fb0
+  0x7ffea0a8e950 -> 0x5631766f5fb0
+```
+**to-space** is printed only when GC is in incremental mode
+```
+Garbage collector (GC) state:
+HEAP: free = 40 bytes, used = 3160 bytes, scan = 0x5631766f65b0, next = 0x5631766f65b0, limit = 0x5631766f65d8
+FROM-SPACE [0x5631766f5320 : 0x5631766f5fa0]:
+  0x5631766f5320 : 2
+  0x5631766f5330 : 3
+  0x5631766f5340 : 4
+TO-SPACE [0x55de61a29fb0 : 0x55de61a2ac30] (active):
+  0x5631766f5fb0 : 11
+  0x5631766f5fc0 : 10
+  0x5631766f5fd0 : 9
   ...
+  0x5631766f65d8 : 118
+  0x5631766f65e8 : fn<0x563175db6418>
+  0x5631766f6600 : fn<0x563175db6418>
+ROOTS: count = 25
+  0x7ffea0a8e968 -> 0x563175dbb040
+  0x7ffea0a8e970 -> 0x5631766f5fb0
+  0x7ffea0a8e950 -> 0x5631766f5fb0
 ```
 
 Other debug information is always printed and contains state of variables used in particular part of GC algorithm.
