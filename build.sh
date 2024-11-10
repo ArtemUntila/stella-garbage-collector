@@ -9,7 +9,6 @@ gcc -g -std=c11 \
     -DSTELLA_RUNTIME_STATS \
     -DSTELLA_GC_STATE_ON_GC_START \
     -DSTELLA_GC_STATE_ON_GC_END \
-    -DSTELLA_GC_STATE_ON_STATS \
-    -DSTELLA_GC_STATS_ON_OOM \
+    -DSTELLA_STATS_ON_OOM \
     $name.c stella/runtime.c stella/gc.c -o $name
 echo $name

@@ -74,9 +74,9 @@ int points_to(void *space, void *p) {
 
 void check_oom(size_t size_in_bytes) {
   if (alloc_pos + size_in_bytes > limit) {
-    printf("[GC] Out of memory\n");
-    #ifdef STELLA_GC_STATS_ON_OOM
-    print_gc_alloc_stats();
+    printf("Out of memory\n");
+    #ifdef STELLA_STATS_ON_OOM
+    print_stella_stats();
     #endif
     exit(12);
   }
@@ -145,14 +145,13 @@ void inc_gc() {
   }
   if (scan == next) {
     printf("[GC] Finish incremental GC\n");
-    #ifdef STELLA_GC_STATE_ON_GC_END
-    print_gc_state();
-    #endif
     inc_mode = 0;
-
     void *tmp = to_space;
     to_space = from_space;
     from_space = tmp;
+    #ifdef STELLA_GC_STATE_ON_GC_END
+    print_gc_state();
+    #endif
   }
 }
 
@@ -211,19 +210,31 @@ void print_gc_alloc_stats() {
   printf("Total read forwardings:  %'d reads\n", total_read_forwards);
 }
 
+void print_stella_object_with_header(stella_object *obj) {
+    printf("[%d] ", STELLA_OBJECT_HEADER_TAG(obj->object_header));print_stella_object(obj);
+}
+
 void print_mem(void *start, void *end) {
   void *p = start;
   while (p < end) {
-    printf("  %p : ", p);print_stella_object(p);printf("\n");
+    printf("  %p : ", p);print_stella_object_with_header(p);printf("\n");
     p += size_of_object(p);
   }
 }
 
+void print_active_space(void *space) {
+  print_mem(space, alloc_pos);
+  if (limit < space + MAX_SPACE_SIZE) {
+    printf("  ...\n");
+    print_mem(limit, space + MAX_SPACE_SIZE);
+  }
+}
+
 void print_from_space() {
-  printf("FROM-SPACE ");print_space_range(from_space);
+  printf("FROM-SPACE");print_space_range(from_space);
   if (points_to(from_space, alloc_pos)) {
     printf(" (active):\n");
-    print_mem(from_space, alloc_pos);
+    print_active_space(from_space);
   } else {
     printf(":\n");
     print_mem(from_space, from_space + MAX_SPACE_SIZE);
@@ -233,11 +244,7 @@ void print_from_space() {
 void print_to_space() {
   if (!points_to(to_space, alloc_pos)) return;
   printf("TO-SPACE ");print_space_range(to_space);printf(" (active):\n");
-  print_mem(to_space, alloc_pos);
-  if (limit < to_space + MAX_SPACE_SIZE) {
-    printf("  ...\n");
-    print_mem(limit, to_space + MAX_SPACE_SIZE);
-  }
+  print_active_space(to_space);
 }
 
 void print_gc_state() {
